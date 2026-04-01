@@ -79,7 +79,10 @@ export default function Page() {
     if (isComplete && phase === "translating") {
       setPhase("complete")
     }
-  }, [isComplete, phase])
+    if (isFailed && phase === "translating") {
+      setPhase("upload")
+    }
+  }, [isComplete, isFailed, phase])
 
   const downloadUrl = jobId ? `/api/jobs/${jobId}/download` : ""
   const translatedFileName = fileInfo
@@ -200,18 +203,6 @@ export default function Page() {
         onRetry={handleRetry}
         onClose={isFailed ? handleTranslateAnother : undefined}
       />
-
-      {isFailed && phase === "translating" && (
-        <div className="fixed inset-x-0 bottom-8 z-50 mx-auto max-w-sm px-4">
-          <Button
-            onClick={handleTranslateAnother}
-            variant="outline"
-            className="w-full"
-          >
-            Start Over
-          </Button>
-        </div>
-      )}
     </div>
   )
 }

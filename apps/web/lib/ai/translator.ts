@@ -11,7 +11,7 @@ import { buildSystemPrompt, buildUserPrompt } from "@/lib/ai/prompts"
 
 const MAX_RETRIES = 3
 const BASE_DELAY_MS = 2000
-const FETCH_TIMEOUT_MS = 90_000
+const FETCH_TIMEOUT_MS = 180_000
 
 type OpenRouterMessage = {
   role: "system" | "user" | "assistant"
