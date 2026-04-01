@@ -53,7 +53,7 @@ export function PdfPreview({
       try {
         const pdfjsLib = await import("pdfjs-dist")
         pdfjsLib.GlobalWorkerOptions.workerSrc =
-          "//cdnjs.cloudflare.com/ajax/libs/pdf.js/5.6.205/pdf.worker.min.mjs"
+          "https://unpkg.com/pdfjs-dist@5.6.205/build/pdf.worker.min.mjs"
 
         const loadingTask = pdfjsLib.getDocument(pdfUrl)
         const doc = await loadingTask.promise

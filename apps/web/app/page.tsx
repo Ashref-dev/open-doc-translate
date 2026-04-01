@@ -9,6 +9,7 @@ import { LanguageSelector } from "@/components/language-selector"
 import { ProgressOverlay } from "@/components/progress-overlay"
 import { DownloadSection } from "@/components/download-section"
 import { PdfPreview } from "@/components/pdf-preview"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { useUpload } from "@/hooks/use-upload"
 import { useTranslationJob } from "@/hooks/use-translation-job"
 import type { JobStatus } from "@/lib/jobs/types"
@@ -89,6 +90,10 @@ export default function Page() {
 
   return (
     <div className="relative min-h-[100dvh]">
+      <div className="fixed top-4 right-4 z-50">
+        <ThemeToggle />
+      </div>
+
       <div className="pointer-events-none fixed inset-x-0 top-0 -z-10 h-[60vh] overflow-hidden">
         {mounted && (
           <Dithering
