@@ -9,9 +9,9 @@ import type {
 import { textBlocksToTranslationBlocks } from "@/lib/ai/types"
 import { buildSystemPrompt, buildUserPrompt } from "@/lib/ai/prompts"
 
-const BATCH_SIZE = 20
 const MAX_RETRIES = 3
 const BASE_DELAY_MS = 2000
+const FETCH_TIMEOUT_MS = 90_000
 
 type OpenRouterMessage = {
   role: "system" | "user" | "assistant"
@@ -57,6 +57,7 @@ async function callOpenRouter(messages: OpenRouterMessage[]): Promise<string> {
           response_format: { type: "json_object" },
           temperature: 0.3,
         }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       }
     )
 
@@ -173,18 +174,6 @@ export async function translateBlocks(
   void context
 
   const translationBlocks = textBlocksToTranslationBlocks(blocks)
-  const batches: TranslationBlock[][] = []
 
-  for (let i = 0; i < translationBlocks.length; i += BATCH_SIZE) {
-    batches.push(translationBlocks.slice(i, i + BATCH_SIZE))
-  }
-
-  const allResults: TranslatedBlock[] = []
-
-  for (const batch of batches) {
-    const batchResults = await translateBatch(batch, sourceLang, targetLang)
-    allResults.push(...batchResults)
-  }
-
-  return allResults
+  return translateBatch(translationBlocks, sourceLang, targetLang)
 }

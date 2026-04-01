@@ -1,7 +1,7 @@
 export const config = {
   openrouter: {
     apiKey: process.env.OPENROUTER_API_KEY ?? "",
-    model: process.env.OPENROUTER_MODEL ?? "qwen/qwen3.6-plus-preview:free",
+    model: process.env.OPENROUTER_MODEL ?? "stepfun/step-3.5-flash:free",
     baseUrl: "https://openrouter.ai/api/v1",
   },
   upload: {
