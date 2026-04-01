@@ -10,16 +10,20 @@ import type {
 type LineItem = {
   item: RawTextItem
   x: number
-  y: number
+  baselineY: number
   fontSize: number
   fontName: string
+  ascent: number
+  descent: number
 }
 
 type TextLine = {
   items: LineItem[]
-  y: number
+  baselineY: number
   minX: number
   maxX: number
+  topY: number
+  bottomY: number
   fontSize: number
   fontName: string
 }
@@ -27,58 +31,68 @@ type TextLine = {
 export function clusterTextItems(
   items: RawTextItem[],
   styles: Record<string, RawTextStyle>,
-  pageHeight: number,
+  _pageHeight: number,
   pageIndex: number
 ): TextBlock[] {
   if (items.length === 0) return []
 
   const lineItems = items
     .filter((item) => item.str.trim().length > 0)
-    .map((item) => toLineItem(item, pageHeight))
+    .map((item) => toLineItem(item, styles))
 
   const lines = groupIntoLines(lineItems)
-  const blocks = groupIntoBlocks(lines, pageHeight)
+  const blocks = groupIntoBlocks(lines)
 
   return blocks.map((block, index) =>
     toTextBlock(block, styles, pageIndex, index)
   )
 }
 
-function toLineItem(item: RawTextItem, pageHeight: number): LineItem {
-  const fontSize = Math.abs(item.transform[3] ?? 12)
+function toLineItem(
+  item: RawTextItem,
+  styles: Record<string, RawTextStyle>
+): LineItem {
+  const fontSize = Math.abs(item.transform[3] ?? 12) || 12
   const x = item.transform[4] ?? 0
-  const yFromBottom = item.transform[5] ?? 0
-  const y = pageHeight - yFromBottom
+  const baselineY = item.transform[5] ?? 0
+
+  const style = styles[item.fontName]
+  const ascent = style ? style.ascent * fontSize : fontSize * 0.8
+  const descent = style ? Math.abs(style.descent) * fontSize : fontSize * 0.2
 
   return {
     item,
     x,
-    y,
-    fontSize: fontSize || 12,
+    baselineY,
+    fontSize,
     fontName: item.fontName,
+    ascent,
+    descent,
   }
 }
 
 function groupIntoLines(items: LineItem[]): TextLine[] {
-  const sorted = [...items].sort((a, b) => a.y - b.y || a.x - b.x)
+  const sorted = [...items].sort(
+    (a, b) => b.baselineY - a.baselineY || a.x - b.x
+  )
 
   const lines: TextLine[] = []
   let currentLine: LineItem[] = []
-  let currentY = -Infinity
+  let currentY = Infinity
 
   const Y_TOLERANCE = 3
 
   for (const item of sorted) {
     if (
       currentLine.length === 0 ||
-      Math.abs(item.y - currentY) <= Y_TOLERANCE
+      Math.abs(item.baselineY - currentY) <= Y_TOLERANCE
     ) {
       currentLine.push(item)
-      if (currentLine.length === 1) currentY = item.y
+      if (currentLine.length === 1) currentY = item.baselineY
     } else {
       lines.push(buildLine(currentLine))
       currentLine = [item]
-      currentY = item.y
+      currentY = item.baselineY
     }
   }
 
@@ -96,20 +110,29 @@ function buildLine(items: LineItem[]): TextLine {
   const first = sorted[0]!
   const last = sorted[sorted.length - 1]!
 
+  let topY = -Infinity
+  let bottomY = Infinity
+  for (const item of sorted) {
+    topY = Math.max(topY, item.baselineY + item.ascent)
+    bottomY = Math.min(bottomY, item.baselineY - item.descent)
+  }
+
   return {
     items: sorted,
-    y: first.y,
+    baselineY: first.baselineY,
     minX: first.x,
     maxX: last.x + last.item.width,
+    topY,
+    bottomY,
     fontSize: primarySize,
     fontName: primaryFont,
   }
 }
 
-function groupIntoBlocks(lines: TextLine[], _pageHeight: number): TextLine[][] {
+function groupIntoBlocks(lines: TextLine[]): TextLine[][] {
   if (lines.length === 0) return []
 
-  const sorted = [...lines].sort((a, b) => a.y - b.y)
+  const sorted = [...lines].sort((a, b) => b.baselineY - a.baselineY)
   const blocks: TextLine[][] = []
   let currentBlock: TextLine[] = [sorted[0]!]
 
@@ -117,7 +140,7 @@ function groupIntoBlocks(lines: TextLine[], _pageHeight: number): TextLine[][] {
     const prevLine = sorted[i - 1]!
     const currLine = sorted[i]!
 
-    const verticalGap = currLine.y - prevLine.y
+    const verticalGap = prevLine.bottomY - currLine.topY
     const expectedLineHeight = prevLine.fontSize * 1.5
     const fontSizeRatio =
       Math.min(prevLine.fontSize, currLine.fontSize) /
@@ -126,7 +149,7 @@ function groupIntoBlocks(lines: TextLine[], _pageHeight: number): TextLine[][] {
     const horizontalOverlap = hasHorizontalOverlap(prevLine, currLine)
 
     const shouldMerge =
-      verticalGap <= expectedLineHeight * 1.3 &&
+      Math.abs(verticalGap) <= expectedLineHeight * 1.3 &&
       sameFontSize &&
       horizontalOverlap
 
@@ -154,16 +177,24 @@ function toTextBlock(
   readingOrder: number
 ): TextBlock {
   const allItems = lines.flatMap((line) => line.items)
-  const bbox = computeBBox(allItems)
-  const text = lines
-    .map((line) => line.items.map((item) => item.item.str).join(""))
+
+  const sortedLines = [...lines].sort((a, b) => b.baselineY - a.baselineY)
+  const text = sortedLines
+    .map((line) =>
+      [...line.items]
+        .sort((a, b) => a.x - b.x)
+        .map((item) => item.item.str)
+        .join("")
+    )
     .join("\n")
+
+  const bbox = computeBBox(lines)
 
   const spans: TextSpan[] = allItems.map((item) => ({
     text: item.item.str,
     bbox: {
       x: item.x,
-      y: item.y,
+      y: item.baselineY,
       width: item.item.width,
       height: item.fontSize,
     },
@@ -181,8 +212,10 @@ function toTextBlock(
   const blockStyle: BlockStyle = {
     align: detectAlignment(lines, bbox),
     lineHeight:
-      lines.length > 1
-        ? ((lines[1]?.y ?? 0) - (lines[0]?.y ?? 0)) / avgFontSize
+      sortedLines.length > 1
+        ? Math.abs(
+            (sortedLines[0]?.baselineY ?? 0) - (sortedLines[1]?.baselineY ?? 0)
+          ) / avgFontSize
         : undefined,
     bullet: hasBullet,
   }
@@ -198,26 +231,28 @@ function toTextBlock(
   }
 }
 
-function computeBBox(items: LineItem[]): BBox {
+function computeBBox(lines: TextLine[]): BBox {
   let minX = Infinity
-  let minY = Infinity
   let maxX = -Infinity
-  let maxY = -Infinity
+  let topY = -Infinity
+  let bottomY = Infinity
 
-  for (const item of items) {
-    minX = Math.min(minX, item.x)
-    minY = Math.min(minY, item.y)
-    maxX = Math.max(maxX, item.x + item.item.width)
-    maxY = Math.max(maxY, item.y + item.fontSize)
+  for (const line of lines) {
+    minX = Math.min(minX, line.minX)
+    maxX = Math.max(maxX, line.maxX)
+    topY = Math.max(topY, line.topY)
+    bottomY = Math.min(bottomY, line.bottomY)
   }
 
-  const PADDING = 2
+  const H_PAD = 4
+  const V_PAD_TOP = 3
+  const V_PAD_BOTTOM = 5
 
   return {
-    x: minX - PADDING,
-    y: minY - PADDING,
-    width: maxX - minX + PADDING * 2,
-    height: maxY - minY + PADDING * 2,
+    x: minX - H_PAD,
+    y: bottomY - V_PAD_BOTTOM,
+    width: maxX - minX + H_PAD * 2,
+    height: topY - bottomY + V_PAD_TOP + V_PAD_BOTTOM,
   }
 }
 

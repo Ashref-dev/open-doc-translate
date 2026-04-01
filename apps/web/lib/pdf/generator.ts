@@ -65,17 +65,24 @@ function wrapText(
   const paragraphs = text.split("\n")
 
   for (const paragraph of paragraphs) {
+    if (paragraph.trim().length === 0) {
+      lines.push("")
+      continue
+    }
     const words = paragraph.split(" ")
     let currentLine = ""
 
     for (const word of words) {
       const testLine = currentLine ? `${currentLine} ${word}` : word
-      const testWidth = font.widthOfTextAtSize(testLine, fontSize)
-
-      if (testWidth > maxWidth && currentLine) {
-        lines.push(currentLine)
-        currentLine = word
-      } else {
+      try {
+        const testWidth = font.widthOfTextAtSize(testLine, fontSize)
+        if (testWidth > maxWidth && currentLine) {
+          lines.push(currentLine)
+          currentLine = word
+        } else {
+          currentLine = testLine
+        }
+      } catch {
         currentLine = testLine
       }
     }
@@ -90,71 +97,80 @@ function wrapText(
 
 function fitFontSize(
   text: string,
-  bbox: BBox,
+  innerWidth: number,
+  innerHeight: number,
   font: PDFFont,
   startSize: number
 ): { fontSize: number; lines: string[]; overflow: boolean } {
-  let fontSize = startSize
-  let lines = wrapText(text, bbox.width, font, fontSize)
+  let fontSize = Math.min(startSize, 24)
+  let lines = wrapText(text, innerWidth, font, fontSize)
   const lineHeightRatio = 1.2
 
   while (fontSize > MIN_FONT_SIZE) {
     const totalHeight = lines.length * fontSize * lineHeightRatio
-    const maxLineWidth = Math.max(
-      ...lines.map((l) => font.widthOfTextAtSize(l, fontSize))
-    )
+    let maxLineWidth = 0
+    for (const l of lines) {
+      try {
+        maxLineWidth = Math.max(
+          maxLineWidth,
+          font.widthOfTextAtSize(l, fontSize)
+        )
+      } catch {
+        maxLineWidth = innerWidth
+      }
+    }
 
-    if (maxLineWidth <= bbox.width && totalHeight <= bbox.height) {
+    if (maxLineWidth <= innerWidth && totalHeight <= innerHeight) {
       return { fontSize, lines, overflow: false }
     }
 
-    fontSize -= 1
-    lines = wrapText(text, bbox.width, font, fontSize)
+    fontSize -= 0.5
+    lines = wrapText(text, innerWidth, font, fontSize)
   }
 
-  lines = wrapText(text, bbox.width, font, fontSize)
-  const totalHeight = lines.length * fontSize * lineHeightRatio
-  const maxLineWidth = Math.max(
-    ...lines.map((l) => font.widthOfTextAtSize(l, fontSize))
-  )
-  const overflow = maxLineWidth > bbox.width || totalHeight > bbox.height
-
-  return { fontSize, lines, overflow }
+  lines = wrapText(text, innerWidth, font, fontSize)
+  return { fontSize, lines, overflow: true }
 }
 
-function eraseOriginalText(page: PDFPage, bbox: BBox, pageHeight: number) {
+function eraseArea(page: PDFPage, bbox: BBox) {
   page.drawRectangle({
     x: bbox.x,
-    y: pageHeight - bbox.y - bbox.height,
-    width: bbox.width + 2,
-    height: bbox.height + 2,
+    y: bbox.y,
+    width: bbox.width,
+    height: bbox.height,
     color: rgb(1, 1, 1),
     borderWidth: 0,
   })
 }
 
-function drawTranslatedText(
+function drawLines(
   page: PDFPage,
   bbox: BBox,
   lines: string[],
   font: PDFFont,
   fontSize: number,
-  color: { r: number; g: number; b: number },
-  pageHeight: number
+  color: { r: number; g: number; b: number }
 ) {
   const lineHeight = fontSize * 1.2
-  // y positions: start from the top of the bbox, offset by one line of text
-  const startY = pageHeight - bbox.y - fontSize
+  const ascent = font.heightAtSize(fontSize) * 0.75
+  const startY = bbox.y + bbox.height - ascent
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? ""
-    page.drawText(line, {
-      x: bbox.x,
-      y: startY - i * lineHeight,
-      size: fontSize,
-      font,
-      color: rgb(color.r, color.g, color.b),
-    })
+    if (line.length === 0) continue
+    const y = startY - i * lineHeight
+    if (y < bbox.y - fontSize) break
+    try {
+      page.drawText(line, {
+        x: bbox.x + 2,
+        y,
+        size: fontSize,
+        font,
+        color: rgb(color.r, color.g, color.b),
+      })
+    } catch {
+      continue
+    }
   }
 }
 
@@ -218,11 +234,15 @@ export async function generateTranslatedPdf(
 
       const safeText = sanitizeForWinAnsi(translation.translatedText)
 
-      eraseOriginalText(newPage, block.bbox, pageHeight)
+      eraseArea(newPage, block.bbox)
+
+      const innerWidth = Math.max(block.bbox.width - 4, 20)
+      const innerHeight = Math.max(block.bbox.height, defaultFontSize * 1.2)
 
       const { fontSize, lines, overflow } = fitFontSize(
         safeText,
-        block.bbox,
+        innerWidth,
+        innerHeight,
         font,
         defaultFontSize
       )
@@ -231,15 +251,7 @@ export async function generateTranslatedPdf(
         warnings.push(`Text overflow in block ${block.id}`)
       }
 
-      drawTranslatedText(
-        newPage,
-        block.bbox,
-        lines,
-        font,
-        fontSize,
-        color,
-        pageHeight
-      )
+      drawLines(newPage, block.bbox, lines, font, fontSize, color)
     }
   }
 

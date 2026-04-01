@@ -181,7 +181,10 @@ export function PdfPreview({
           </div>
         )}
 
-        <div className="relative flex max-h-[600px] w-full justify-center overflow-auto bg-muted/10 p-6">
+        <div
+          className="relative flex w-full justify-center overflow-auto bg-muted/10 p-4 sm:p-6"
+          style={{ maxHeight: "80vh" }}
+        >
           {!loading && !error && isRendering && (
             <div className="animate-shimmer pointer-events-none absolute inset-x-6 top-6 bottom-6 z-10 rounded-sm bg-gradient-to-r from-transparent via-white/20 to-transparent bg-[length:200%_100%]" />
           )}
