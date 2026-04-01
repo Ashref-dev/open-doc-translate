@@ -114,7 +114,7 @@ export default function Page() {
               <h1 className="text-3xl leading-none font-semibold tracking-tighter sm:text-4xl md:text-5xl lg:text-6xl">
                 OpenTranslate
               </h1>
-              <p className="mt-3 max-w-[40ch] text-sm leading-relaxed text-muted-foreground sm:mt-4 sm:max-w-[45ch] sm:text-base md:text-lg">
+              <p className="mt-3 max-w-[40ch] text-sm leading-relaxed text-foreground sm:mt-4 sm:max-w-[45ch] sm:text-base md:text-lg">
                 Upload a resume PDF in one language, get it back in another —
                 same layout, same design, ready to send.
               </p>
