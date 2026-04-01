@@ -94,7 +94,7 @@ export default function Page() {
         <ThemeToggle />
       </div>
 
-      <div className="pointer-events-none fixed inset-x-0 top-0 -z-10 h-[60vh] overflow-hidden">
+      <div className="pointer-events-none fixed inset-x-0 top-0 -z-10 h-[40vh] overflow-hidden sm:h-[60vh]">
         {mounted && (
           <Dithering
             shape="warp"
@@ -104,21 +104,21 @@ export default function Page() {
             style={{ width: "100%", height: "100%" }}
           />
         )}
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-background" />
+        <div className="absolute inset-0 bg-gradient-to-b from-background/40 via-background/20 to-background sm:from-transparent sm:via-transparent" />
       </div>
 
       <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         {phase === "upload" && (
-          <div className="grid min-h-[100dvh] items-center gap-12 py-16 lg:grid-cols-[1fr_1.2fr] lg:gap-16">
-            <div className="flex flex-col justify-center">
-              <h1 className="text-4xl leading-none font-semibold tracking-tighter md:text-5xl lg:text-6xl">
+          <div className="grid min-h-[100dvh] items-center gap-8 py-12 sm:gap-12 sm:py-16 lg:grid-cols-[1fr_1.2fr] lg:gap-16">
+            <div className="flex flex-col justify-center pt-8 sm:pt-0">
+              <h1 className="text-3xl leading-none font-semibold tracking-tighter sm:text-4xl md:text-5xl lg:text-6xl">
                 OpenTranslate
               </h1>
-              <p className="mt-4 max-w-[45ch] text-base leading-relaxed text-muted-foreground md:text-lg">
+              <p className="mt-3 max-w-[40ch] text-sm leading-relaxed text-muted-foreground sm:mt-4 sm:max-w-[45ch] sm:text-base md:text-lg">
                 Upload a resume PDF in one language, get it back in another —
                 same layout, same design, ready to send.
               </p>
-              <div className="mt-6 flex items-center gap-3 text-sm text-muted-foreground">
+              <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground sm:mt-6 sm:gap-3">
                 <span className="inline-flex h-6 items-center rounded-full bg-primary/10 px-2.5 text-xs font-medium text-primary">
                   AI-powered
                 </span>
@@ -132,7 +132,7 @@ export default function Page() {
             </div>
 
             <div className="flex flex-col gap-6">
-              <div className="rounded-2xl border border-white/[0.08] bg-card/60 p-6 shadow-xl shadow-primary/5 backdrop-blur-xl dark:bg-card/40">
+              <div className="rounded-2xl border border-white/[0.08] bg-card/60 p-4 shadow-xl shadow-primary/5 backdrop-blur-xl sm:p-6 dark:bg-card/40">
                 <UploadZone
                   onFileSelected={handleFileSelected}
                   uploadState={uploadState as UploadState}

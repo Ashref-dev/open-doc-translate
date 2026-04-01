@@ -93,7 +93,7 @@ export function UploadZone({
   const isInteractive = uploadState === "idle" || uploadState === "error"
 
   const baseContainerClasses =
-    "relative flex min-h-[240px] w-full flex-col items-center justify-center rounded-2xl bg-card/50 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-all duration-200 outline-none overflow-hidden"
+    "relative flex min-h-[200px] w-full flex-col items-center justify-center rounded-2xl bg-card/50 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-all duration-200 outline-none overflow-hidden sm:min-h-[240px]"
 
   const getContainerStateClasses = () => {
     switch (uploadState) {
@@ -133,18 +133,18 @@ export function UploadZone({
       />
 
       {(uploadState === "idle" || uploadState === "dragover") && (
-        <div className="pointer-events-none flex flex-col items-center space-y-4 text-center">
+        <div className="pointer-events-none flex flex-col items-center space-y-3 px-4 text-center sm:space-y-4">
           <div
-            className={`rounded-full p-4 ${
+            className={`rounded-full p-3 sm:p-4 ${
               uploadState === "dragover"
                 ? "bg-primary/20 text-primary"
                 : "bg-muted text-muted-foreground"
             }`}
           >
-            <RiUploadCloud2Line className="h-8 w-8" />
+            <RiUploadCloud2Line className="h-6 w-6 sm:h-8 sm:w-8" />
           </div>
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-foreground">
+          <div className="max-w-[260px] space-y-1 sm:max-w-none">
+            <p className="text-sm font-medium text-balance text-foreground">
               {uploadState === "dragover"
                 ? "Drop your PDF here"
                 : "Drop your resume PDF here or click to browse"}
