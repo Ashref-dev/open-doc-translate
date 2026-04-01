@@ -75,9 +75,11 @@ export default function Page() {
 
   const progressOpen = phase === "translating" && !isComplete && !isFailed
 
-  if (isComplete && phase === "translating") {
-    setPhase("complete")
-  }
+  useEffect(() => {
+    if (isComplete && phase === "translating") {
+      setPhase("complete")
+    }
+  }, [isComplete, phase])
 
   const downloadUrl = jobId ? `/api/jobs/${jobId}/download` : ""
   const translatedFileName = fileInfo

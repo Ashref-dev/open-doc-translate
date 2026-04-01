@@ -43,7 +43,7 @@ export function DownloadSection({
   }
 
   return (
-    <Card className="mx-auto w-full max-w-lg rounded-2xl border-border/50 bg-background/60 shadow-xl backdrop-blur-md">
+    <Card className="mx-auto w-full max-w-lg rounded-2xl border border-border bg-card shadow-xl">
       <CardHeader className="pb-4 text-center">
         <div className="mx-auto mb-4 flex h-16 w-16 animate-[pulse-glow_2s_ease-in-out_infinite] items-center justify-center rounded-full bg-primary/10 text-primary">
           <RiCheckLine className="h-8 w-8" />
@@ -56,7 +56,7 @@ export function DownloadSection({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="flex items-center justify-between rounded-xl border-y border-r border-l-4 border-l-primary bg-card/40 p-4 shadow-sm backdrop-blur-sm">
+        <div className="flex items-center justify-between rounded-xl border border-l-4 border-l-primary bg-muted/50 p-4 shadow-sm">
           <div className="flex items-center space-x-4 overflow-hidden">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
               <RiFileTextLine className="h-5 w-5" />
