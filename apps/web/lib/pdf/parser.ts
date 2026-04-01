@@ -1,4 +1,4 @@
-import { join } from "node:path"
+import { getDocumentProxy } from "unpdf"
 import { config } from "@/lib/config"
 import type {
   DocumentModel,
@@ -8,33 +8,6 @@ import type {
   RawTextStyle,
 } from "@/lib/pdf/types"
 
-const PDFJS_DIST_PATH = join(process.cwd(), "node_modules", "pdfjs-dist")
-
-type PdfjsModule = {
-  getDocument: (params: Record<string, unknown>) => {
-    promise: Promise<PdfjsDocument>
-  }
-  GlobalWorkerOptions: { workerSrc: string }
-}
-
-type PdfjsDocument = {
-  numPages: number
-  getPage: (num: number) => Promise<PdfjsPage>
-  getMetadata: () => Promise<{ info: Record<string, unknown> }>
-  destroy: () => Promise<void>
-}
-
-type PdfjsPage = {
-  getViewport: (params: { scale: number }) => { width: number; height: number }
-  getTextContent: () => Promise<{
-    items: unknown[]
-    styles: Record<
-      string,
-      { fontFamily: string; ascent: number; descent: number; vertical: boolean }
-    >
-  }>
-}
-
 type PdfjsTextItem = {
   str: string
   dir: string
@@ -43,35 +16,6 @@ type PdfjsTextItem = {
   height: number
   fontName: string
   hasEOL: boolean
-}
-
-let pdfjsModule: PdfjsModule | null = null
-
-async function getPdfjs(): Promise<PdfjsModule> {
-  if (pdfjsModule) return pdfjsModule
-  const mod =
-    (await import("pdfjs-dist/legacy/build/pdf.mjs")) as unknown as PdfjsModule
-  mod.GlobalWorkerOptions.workerSrc = join(
-    PDFJS_DIST_PATH,
-    "legacy",
-    "build",
-    "pdf.worker.mjs"
-  )
-  pdfjsModule = mod
-  return mod
-}
-
-function buildDocumentParams(buffer: Buffer) {
-  return {
-    data: new Uint8Array(buffer),
-    isEvalSupported: false,
-    useWorkerFetch: false,
-    useSystemFonts: true,
-    disableFontFace: true,
-    standardFontDataUrl: join(PDFJS_DIST_PATH, "standard_fonts") + "/",
-    cMapUrl: join(PDFJS_DIST_PATH, "cmaps") + "/",
-    cMapPacked: true,
-  }
 }
 
 function isTextItem(item: unknown): item is PdfjsTextItem {
@@ -113,11 +57,9 @@ function toRawStyles(
   return result
 }
 
-async function loadDocument(buffer: Buffer): Promise<PdfjsDocument> {
+async function loadDocument(buffer: Buffer) {
   try {
-    const pdfjs = await getPdfjs()
-    const loadingTask = pdfjs.getDocument(buildDocumentParams(buffer))
-    return await loadingTask.promise
+    return await getDocumentProxy(new Uint8Array(buffer))
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (message.includes("password")) {
@@ -136,11 +78,15 @@ export async function parsePdf(buffer: Buffer): Promise<DocumentModel> {
 
   try {
     const { info } = await doc.getMetadata()
-    if (typeof info["Title"] === "string" && info["Title"].length > 0) {
-      title = info["Title"]
+    const metadata = info as Record<string, unknown>
+    if (typeof metadata["Title"] === "string" && metadata["Title"].length > 0) {
+      title = metadata["Title"]
     }
-    if (typeof info["Author"] === "string" && info["Author"].length > 0) {
-      author = info["Author"]
+    if (
+      typeof metadata["Author"] === "string" &&
+      metadata["Author"].length > 0
+    ) {
+      author = metadata["Author"]
     }
   } catch {}
 
@@ -158,7 +104,17 @@ export async function parsePdf(buffer: Buffer): Promise<DocumentModel> {
       }
     }
 
-    const rawStyles = toRawStyles(textContent.styles)
+    const rawStyles = toRawStyles(
+      textContent.styles as Record<
+        string,
+        {
+          fontFamily: string
+          ascent: number
+          descent: number
+          vertical: boolean
+        }
+      >
+    )
 
     pages.push({
       width: viewport.width,
@@ -196,7 +152,7 @@ export async function validatePdf(
     }
   }
 
-  let doc: PdfjsDocument
+  let doc: Awaited<ReturnType<typeof getDocumentProxy>>
   try {
     doc = await loadDocument(buffer)
   } catch (err) {
