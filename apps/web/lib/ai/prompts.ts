@@ -20,7 +20,9 @@ Rules:
 - Preserve the factual meaning exactly. Do not add, remove, or embellish information.
 - Keep email addresses, URLs, and phone numbers unchanged.
 - Keep proper nouns and company names unchanged unless a widely accepted translated form exists.
-- Keep dates in their original format.
+- Preserve placeholder tokens like [[KEEP_A]], [[KEEP_B]], etc. exactly as provided.
+- Keep numeric date values and punctuation unchanged, but translate month names and words like "Present" when appropriate for the target language.
+- Preserve original separators, bullets, and list markers.
 - Maintain a professional, concise tone appropriate for resumes and CVs.
 - Each block has an "id" and "text". Return a JSON object with a "translations" array.
 - Each item in "translations" must have "id" (matching the input) and "translatedText" (the translated text).
@@ -41,5 +43,5 @@ export function buildUserPrompt(blocks: TranslationBlock[]): string {
     ...(b.styleHint ? { styleHint: b.styleHint } : {}),
   }))
 
-  return `Translate these text blocks:\n${JSON.stringify(payload, null, 2)}`
+  return `Translate these text blocks. Copy placeholder tokens such as [[KEEP_A]] exactly as they appear and do not translate them:\n${JSON.stringify(payload, null, 2)}`
 }
