@@ -12,6 +12,7 @@ import { buildSystemPrompt, buildUserPrompt } from "@/lib/ai/prompts"
 const MAX_RETRIES = 3
 const BASE_DELAY_MS = 2000
 const FETCH_TIMEOUT_MS = 180_000
+const BATCH_SIZE = 30
 
 type OpenRouterMessage = {
   role: "system" | "user" | "assistant"
@@ -175,5 +176,18 @@ export async function translateBlocks(
 
   const translationBlocks = textBlocksToTranslationBlocks(blocks)
 
-  return translateBatch(translationBlocks, sourceLang, targetLang)
+  if (translationBlocks.length <= BATCH_SIZE) {
+    return translateBatch(translationBlocks, sourceLang, targetLang)
+  }
+
+  const batches: TranslationBlock[][] = []
+  for (let i = 0; i < translationBlocks.length; i += BATCH_SIZE) {
+    batches.push(translationBlocks.slice(i, i + BATCH_SIZE))
+  }
+
+  const batchResults = await Promise.all(
+    batches.map((batch) => translateBatch(batch, sourceLang, targetLang))
+  )
+
+  return batchResults.flat()
 }

@@ -233,25 +233,39 @@ export async function generateTranslatedPdf(
       const color = parseHexColor(colorHex)
 
       const safeText = sanitizeForWinAnsi(translation.translatedText)
+      if (safeText.trim().length === 0) continue
 
       eraseArea(newPage, block.bbox)
 
-      const innerWidth = Math.max(block.bbox.width - 4, 20)
-      const innerHeight = Math.max(block.bbox.height, defaultFontSize * 1.2)
+      const baselineY =
+        firstSpan?.bbox.y ?? block.bbox.y + block.bbox.height * 0.7
+      let fontSize = defaultFontSize
 
-      const { fontSize, lines, overflow } = fitFontSize(
-        safeText,
-        innerWidth,
-        innerHeight,
-        font,
-        defaultFontSize
-      )
-
-      if (overflow) {
-        warnings.push(`Text overflow in block ${block.id}`)
+      try {
+        let textWidth = font.widthOfTextAtSize(safeText, fontSize)
+        const maxWidth = block.bbox.width
+        while (textWidth > maxWidth && fontSize > MIN_FONT_SIZE) {
+          fontSize -= 0.5
+          textWidth = font.widthOfTextAtSize(safeText, fontSize)
+        }
+        if (textWidth > maxWidth) {
+          warnings.push(`Text overflow in ${block.id}`)
+        }
+      } catch {
+        fontSize = Math.min(defaultFontSize, 10)
       }
 
-      drawLines(newPage, block.bbox, lines, font, fontSize, color)
+      try {
+        newPage.drawText(safeText, {
+          x: block.bbox.x + 2,
+          y: baselineY,
+          size: fontSize,
+          font,
+          color: rgb(color.r, color.g, color.b),
+        })
+      } catch {
+        continue
+      }
     }
   }
 
