@@ -180,8 +180,15 @@ async function resolveFont(
   fontCache: Map<StandardFonts, PDFFont>
 ): Promise<PDFFont> {
   const firstSpan = block.spans[0]
-  const fontName = firstSpan?.fontFamily ?? "Helvetica"
-  const standardFont = mapFontToStandard(fontName, firstSpan?.fontFamily)
+  const family = firstSpan?.fontFamily ?? "sans-serif"
+  const weight = firstSpan?.fontWeight ?? "normal"
+  const style = firstSpan?.fontStyle ?? "normal"
+
+  let combined = family
+  if (weight === "bold") combined += " bold"
+  if (style === "italic") combined += " italic"
+
+  const standardFont = mapFontToStandard(combined, family)
 
   let font = fontCache.get(standardFont)
   if (!font) {

@@ -39,30 +39,30 @@ export function mapFontToStandard(
   pdfJsFontName: string,
   fontFamily?: string
 ): StandardFonts {
-  const name = fontFamily ?? pdfJsFontName
+  const name = pdfJsFontName + " " + (fontFamily ?? "")
   const bold = isBoldFont(name)
   const italic = isItalicFont(name)
 
-  if (isSerifFont(name)) {
-    if (bold && italic) return StandardFonts.TimesRomanBoldItalic
-    if (bold) return StandardFonts.TimesRomanBold
-    if (italic) return StandardFonts.TimesRomanItalic
-    return StandardFonts.TimesRoman
-  }
-
-  if (isMonoFont(name)) {
+  if (isMonoFont(name) || (fontFamily ?? "").includes("monospace")) {
     if (bold && italic) return StandardFonts.CourierBoldOblique
     if (bold) return StandardFonts.CourierBold
     if (italic) return StandardFonts.CourierOblique
     return StandardFonts.Courier
   }
 
-  if (isSansFont(name) || !isSerifFont(name)) {
-    if (bold && italic) return StandardFonts.HelveticaBoldOblique
-    if (bold) return StandardFonts.HelveticaBold
-    if (italic) return StandardFonts.HelveticaOblique
-    return StandardFonts.Helvetica
+  if (
+    isSerifFont(name) ||
+    ((fontFamily ?? "").includes("serif") &&
+      !(fontFamily ?? "").includes("sans"))
+  ) {
+    if (bold && italic) return StandardFonts.TimesRomanBoldItalic
+    if (bold) return StandardFonts.TimesRomanBold
+    if (italic) return StandardFonts.TimesRomanItalic
+    return StandardFonts.TimesRoman
   }
 
+  if (bold && italic) return StandardFonts.HelveticaBoldOblique
+  if (bold) return StandardFonts.HelveticaBold
+  if (italic) return StandardFonts.HelveticaOblique
   return StandardFonts.Helvetica
 }

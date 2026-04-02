@@ -27,6 +27,7 @@ export function clusterTextItems(
 
   const lineItems = items
     .filter((item) => item.str.trim().length > 0)
+    .filter((item) => !isIconOrSymbol(item.str))
     .map((item) => toLineItem(item, styles))
 
   const lines = groupIntoLines(lineItems)
@@ -64,7 +65,7 @@ function groupIntoLines(items: LineItem[]): LineItem[][] {
     (a, b) => b.baselineY - a.baselineY || a.x - b.x
   )
 
-  const lines: LineItem[][] = []
+  const rawLines: LineItem[][] = []
   let currentLine: LineItem[] = []
   let currentY = Infinity
 
@@ -78,17 +79,49 @@ function groupIntoLines(items: LineItem[]): LineItem[][] {
       currentLine.push(item)
       if (currentLine.length === 1) currentY = item.baselineY
     } else {
-      lines.push(currentLine)
+      rawLines.push(currentLine)
       currentLine = [item]
       currentY = item.baselineY
     }
   }
 
   if (currentLine.length > 0) {
-    lines.push(currentLine)
+    rawLines.push(currentLine)
   }
 
-  return lines
+  const result: LineItem[][] = []
+  for (const line of rawLines) {
+    const segments = splitByGap(line)
+    result.push(...segments)
+  }
+
+  return result
+}
+
+function splitByGap(items: LineItem[]): LineItem[][] {
+  if (items.length <= 1) return [items]
+
+  const sorted = [...items].sort((a, b) => a.x - b.x)
+  const GAP_THRESHOLD = 20
+
+  const segments: LineItem[][] = []
+  let current: LineItem[] = [sorted[0]!]
+
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1]!
+    const curr = sorted[i]!
+    const gap = curr.x - (prev.x + prev.item.width)
+
+    if (gap > GAP_THRESHOLD) {
+      segments.push(current)
+      current = [curr]
+    } else {
+      current.push(curr)
+    }
+  }
+
+  segments.push(current)
+  return segments
 }
 
 function lineToTextBlock(
@@ -112,8 +145,8 @@ function lineToTextBlock(
     bottomY = Math.min(bottomY, item.baselineY - item.descent)
   }
 
-  const H_PAD = 2
-  const V_PAD = 2
+  const H_PAD = 4
+  const V_PAD = 4
 
   const bbox: BBox = {
     x: minX - H_PAD,
@@ -152,6 +185,20 @@ function lineToTextBlock(
     style: blockStyle,
     readingOrder,
   }
+}
+
+function isIconOrSymbol(str: string): boolean {
+  const trimmed = str.trim()
+  if (trimmed.length === 0) return true
+  if (trimmed.length === 1) {
+    const cp = trimmed.codePointAt(0) ?? 0
+    if (cp < 0x20) return true
+    if (cp >= 0xe000 && cp <= 0xf8ff) return true
+    if (cp >= 0xf0000) return true
+    if ("|•·—–".includes(trimmed)) return true
+  }
+  if (/^[\s|•·—–\-_=]+$/.test(trimmed)) return true
+  return false
 }
 
 function detectBold(fontName: string): boolean {
