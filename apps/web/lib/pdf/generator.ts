@@ -1,3 +1,6 @@
+import { readFileSync, existsSync } from "node:fs"
+import { join } from "node:path"
+import fontkit from "@pdf-lib/fontkit"
 import {
   PDFDocument,
   StandardFonts,
@@ -10,6 +13,27 @@ import type { TranslatedBlock } from "@/lib/ai/types"
 import { mapFontToStandard } from "@/lib/pdf/font-mapper"
 
 const MIN_FONT_SIZE = 6
+const FONT_ASSET_DIR = join(process.cwd(), "assets/fonts")
+
+type EmbeddedFontKey =
+  | StandardFonts
+  | "glacial-regular"
+  | "glacial-bold"
+  | "glacial-italic"
+  | "poppins-regular"
+  | "poppins-bold"
+  | "poppins-italic"
+  | "poppins-black"
+
+const CUSTOM_FONT_FILES: Partial<Record<EmbeddedFontKey, string>> = {
+  "glacial-bold": "GlacialIndifference-Bold.ttf",
+  "glacial-italic": "GlacialIndifference-Italic.ttf",
+  "glacial-regular": "GlacialIndifference-Regular.ttf",
+  "poppins-black": "Poppins-Black.ttf",
+  "poppins-bold": "Poppins-Bold.ttf",
+  "poppins-italic": "Poppins-Italic.ttf",
+  "poppins-regular": "Poppins-Regular.ttf",
+}
 
 const WINANSI_SAFE = new Set<number>()
 for (let i = 0x20; i <= 0x7e; i++) WINANSI_SAFE.add(i)
@@ -43,6 +67,21 @@ function sanitizeForWinAnsi(text: string): string {
   return result
 }
 
+function sanitizeText(text: string, usesCustomFont: boolean): string {
+  if (usesCustomFont) {
+    let result = ""
+    for (const char of text) {
+      const cp = char.codePointAt(0) ?? 0
+      if (cp === 0x09 || cp === 0x0a || cp === 0x0d || cp >= 0x20) {
+        result += char
+      }
+    }
+    return result
+  }
+
+  return sanitizeForWinAnsi(text)
+}
+
 function parseHexColor(hex: string): { r: number; g: number; b: number } {
   const clean = hex.replace("#", "")
   const r = parseInt(clean.substring(0, 2), 16) / 255
@@ -55,44 +94,204 @@ function parseHexColor(hex: string): { r: number; g: number; b: number } {
   }
 }
 
+type WrappedLine = {
+  text: string
+  indent: number
+}
+
+function measureTextWidth(
+  text: string,
+  font: PDFFont,
+  fontSize: number
+): number {
+  try {
+    return font.widthOfTextAtSize(text, fontSize)
+  } catch {
+    return 0
+  }
+}
+
+function getWrappedLineWidth(
+  line: WrappedLine,
+  font: PDFFont,
+  fontSize: number
+): number {
+  return line.indent + measureTextWidth(line.text, font, fontSize)
+}
+
+function splitWords(text: string): string[] {
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0)
+}
+
+function countWords(text: string): number {
+  return splitWords(text).length
+}
+
+function isWeakWrapToken(token: string): boolean {
+  return /^[-–—/|:]+$/.test(token)
+}
+
+function extractBulletPrefix(
+  text: string
+): { prefix: string; content: string } | null {
+  const match = text.match(/^(\s*[•▪▸►◦‣⁃*>-]\s+)(.+)$/u)
+  if (!match) return null
+
+  return {
+    prefix: match[1] ?? "",
+    content: match[2] ?? "",
+  }
+}
+
+function rebalanceWrappedLines(
+  lines: WrappedLine[],
+  firstLineWidth: number,
+  restLineWidth: number,
+  font: PDFFont,
+  fontSize: number
+) {
+  for (let index = lines.length - 1; index > 0; index--) {
+    const current = lines[index]
+    const previous = lines[index - 1]
+    if (!current || !previous) continue
+
+    const currentWordCount = countWords(current.text)
+    if (currentWordCount > 1 && current.text.trim().length > 14) continue
+
+    const previousWords = splitWords(previous.text)
+    if (previousWords.length < 3) continue
+
+    const previousLimit = index - 1 === 0 ? firstLineWidth : restLineWidth
+    const currentLimit = index === 0 ? firstLineWidth : restLineWidth
+    const currentWords = splitWords(current.text)
+
+    let bestCandidate: { previousText: string; currentText: string } | null =
+      null
+    let bestScore = Number.POSITIVE_INFINITY
+
+    for (let movedCount = 1; movedCount <= 2; movedCount++) {
+      const movedWords = previousWords.slice(-movedCount)
+      const remainingWords = previousWords.slice(0, -movedCount)
+      if (remainingWords.length === 0 || movedWords.length === 0) continue
+
+      const nextCurrentWords = [...movedWords, ...currentWords]
+      const previousText = remainingWords.join(" ")
+      const currentText = nextCurrentWords.join(" ")
+
+      const previousWidth = measureTextWidth(previousText, font, fontSize)
+      const currentWidth = measureTextWidth(currentText, font, fontSize)
+      if (previousWidth > previousLimit || currentWidth > currentLimit) continue
+
+      const previousRatio = previousWidth / Math.max(previousLimit, 1)
+      const currentRatio = currentWidth / Math.max(currentLimit, 1)
+      const balanceScore = Math.abs(previousRatio - currentRatio)
+
+      if (balanceScore < bestScore) {
+        bestCandidate = { previousText, currentText }
+        bestScore = balanceScore
+      }
+    }
+
+    if (!bestCandidate) continue
+
+    previous.text = bestCandidate.previousText
+    current.text = bestCandidate.currentText
+  }
+}
+
 function wrapText(
   text: string,
   maxWidth: number,
   font: PDFFont,
-  fontSize: number
-): string[] {
-  const lines: string[] = []
+  fontSize: number,
+  bullet: boolean
+): WrappedLine[] {
+  const lines: WrappedLine[] = []
   const paragraphs = text.split("\n")
 
   for (const paragraph of paragraphs) {
     if (paragraph.trim().length === 0) {
-      lines.push("")
+      lines.push({ text: "", indent: 0 })
       continue
     }
-    const words = paragraph.split(" ")
-    let currentLine = ""
+
+    const bulletPrefix = bullet ? extractBulletPrefix(paragraph) : null
+    const paragraphText = bulletPrefix?.content ?? paragraph
+    const words = splitWords(paragraphText)
+    const hangingIndent = bulletPrefix
+      ? measureTextWidth(bulletPrefix.prefix, font, fontSize)
+      : 0
+    const firstLineWidth = maxWidth
+    const restLineWidth = Math.max(maxWidth - hangingIndent, 8)
+    let currentWords: string[] = []
+    let currentIndent = 0
+    let currentLineWidth = firstLineWidth
 
     for (const word of words) {
-      const testLine = currentLine ? `${currentLine} ${word}` : word
-      try {
-        const testWidth = font.widthOfTextAtSize(testLine, fontSize)
-        if (testWidth > maxWidth && currentLine) {
-          lines.push(currentLine)
-          currentLine = word
-        } else {
-          currentLine = testLine
-        }
-      } catch {
-        currentLine = testLine
+      const testLine =
+        currentWords.length > 0 ? `${currentWords.join(" ")} ${word}` : word
+      const testWidth = measureTextWidth(testLine, font, fontSize)
+
+      if (
+        currentWords.length > 0 &&
+        testWidth > currentLineWidth &&
+        !isWeakWrapToken(word)
+      ) {
+        lines.push({
+          text: currentWords.join(" "),
+          indent: currentIndent,
+        })
+        currentWords = [word]
+        currentIndent = hangingIndent
+        currentLineWidth = restLineWidth
+      } else {
+        currentWords.push(word)
       }
     }
 
-    if (currentLine) {
-      lines.push(currentLine)
+    if (currentWords.length > 0) {
+      const lineText = currentWords.join(" ")
+      if (bulletPrefix && lines.length === 0) {
+        lines.push({
+          text: `${bulletPrefix.prefix}${lineText}`,
+          indent: 0,
+        })
+      } else {
+        lines.push({ text: lineText, indent: currentIndent })
+      }
+    } else if (bulletPrefix) {
+      lines.push({ text: bulletPrefix.prefix.trimEnd(), indent: 0 })
+    }
+
+    const paragraphLines = lines
+      .slice(Math.max(lines.length - Math.max(words.length, 1), 0))
+      .filter((line) => line.text.length > 0)
+
+    rebalanceWrappedLines(
+      paragraphLines,
+      firstLineWidth,
+      restLineWidth,
+      font,
+      fontSize
+    )
+
+    if (bulletPrefix && paragraphLines.length > 1) {
+      const [firstLine, ...restLines] = paragraphLines
+      if (firstLine && !firstLine.text.startsWith(bulletPrefix.prefix)) {
+        firstLine.text = `${bulletPrefix.prefix}${firstLine.text}`
+        firstLine.indent = 0
+      }
+
+      for (const line of restLines) {
+        line.indent = hangingIndent
+      }
     }
   }
 
-  return lines.length > 0 ? lines : [""]
+  return lines.length > 0 ? lines : [{ text: "", indent: 0 }]
 }
 
 function fitFontSize(
@@ -100,24 +299,21 @@ function fitFontSize(
   innerWidth: number,
   innerHeight: number,
   font: PDFFont,
-  startSize: number
-): { fontSize: number; lines: string[]; overflow: boolean } {
+  startSize: number,
+  bullet: boolean
+): { fontSize: number; lines: WrappedLine[]; overflow: boolean } {
   let fontSize = Math.min(startSize, 24)
-  let lines = wrapText(text, innerWidth, font, fontSize)
+  let lines = wrapText(text, innerWidth, font, fontSize, bullet)
   const lineHeightRatio = 1.2
 
   while (fontSize > MIN_FONT_SIZE) {
     const totalHeight = lines.length * fontSize * lineHeightRatio
     let maxLineWidth = 0
     for (const l of lines) {
-      try {
-        maxLineWidth = Math.max(
-          maxLineWidth,
-          font.widthOfTextAtSize(l, fontSize)
-        )
-      } catch {
-        maxLineWidth = innerWidth
-      }
+      maxLineWidth = Math.max(
+        maxLineWidth,
+        getWrappedLineWidth(l, font, fontSize)
+      )
     }
 
     if (maxLineWidth <= innerWidth && totalHeight <= innerHeight) {
@@ -125,10 +321,10 @@ function fitFontSize(
     }
 
     fontSize -= 0.5
-    lines = wrapText(text, innerWidth, font, fontSize)
+    lines = wrapText(text, innerWidth, font, fontSize, bullet)
   }
 
-  lines = wrapText(text, innerWidth, font, fontSize)
+  lines = wrapText(text, innerWidth, font, fontSize, bullet)
   return { fontSize, lines, overflow: true }
 }
 
@@ -143,26 +339,60 @@ function eraseArea(page: PDFPage, bbox: BBox) {
   })
 }
 
+function getSourceLineBaselines(block: TextBlock): number[] {
+  const sorted = [...block.spans]
+    .map((span) => span.bbox.y)
+    .sort((left, right) => right - left)
+
+  const baselines: number[] = []
+  for (const baseline of sorted) {
+    const previous = baselines[baselines.length - 1]
+    if (previous === undefined || Math.abs(previous - baseline) > 1) {
+      baselines.push(baseline)
+    }
+  }
+
+  return baselines
+}
+
+function getDrawStartY(
+  block: TextBlock,
+  bbox: BBox,
+  font: PDFFont,
+  fontSize: number
+) {
+  const sourceBaselines = getSourceLineBaselines(block)
+  if (sourceBaselines.length > 0) {
+    return (
+      sourceBaselines[0] ??
+      bbox.y + bbox.height - font.heightAtSize(fontSize) * 0.75
+    )
+  }
+
+  const ascent = font.heightAtSize(fontSize) * 0.75
+  return bbox.y + bbox.height - ascent
+}
+
 function drawLines(
   page: PDFPage,
+  block: TextBlock,
   bbox: BBox,
-  lines: string[],
+  lines: WrappedLine[],
   font: PDFFont,
   fontSize: number,
   color: { r: number; g: number; b: number }
 ) {
   const lineHeight = fontSize * 1.2
-  const ascent = font.heightAtSize(fontSize) * 0.75
-  const startY = bbox.y + bbox.height - ascent
+  const startY = getDrawStartY(block, bbox, font, fontSize)
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? ""
-    if (line.length === 0) continue
+    const line = lines[i]
+    if (!line || line.text.length === 0) continue
     const y = startY - i * lineHeight
     if (y < bbox.y - fontSize) break
     try {
-      page.drawText(line, {
-        x: bbox.x + 2,
+      page.drawText(line.text, {
+        x: bbox.x + 2 + line.indent,
         y,
         size: fontSize,
         font,
@@ -177,25 +407,130 @@ function drawLines(
 async function resolveFont(
   block: TextBlock,
   newDoc: PDFDocument,
-  fontCache: Map<StandardFonts, PDFFont>
-): Promise<PDFFont> {
-  const firstSpan = block.spans[0]
-  const family = firstSpan?.fontFamily ?? "sans-serif"
-  const weight = firstSpan?.fontWeight ?? "normal"
-  const style = firstSpan?.fontStyle ?? "normal"
+  fontCache: Map<EmbeddedFontKey, PDFFont>
+): Promise<{ font: PDFFont; usesCustomFont: boolean }> {
+  const referenceSpan = getPrimaryTextSpan(block)
+  const family = referenceSpan?.fontFamily ?? "sans-serif"
+  const weight = referenceSpan?.fontWeight ?? "normal"
+  const style = referenceSpan?.fontStyle ?? "normal"
+  const text = referenceSpan?.text ?? block.text
+
+  const fontKey = resolveFontKey(block, family, weight, style, text)
+
+  let font = fontCache.get(fontKey)
+  if (!font) {
+    if (isStandardFontKey(fontKey)) {
+      font = await newDoc.embedFont(fontKey)
+    } else {
+      const fileName = CUSTOM_FONT_FILES[fontKey]
+      if (!fileName) {
+        throw new Error(`Missing font asset mapping for ${fontKey}`)
+      }
+
+      const fontPath = join(FONT_ASSET_DIR, fileName)
+      if (!existsSync(fontPath)) {
+        throw new Error(`Missing font asset at ${fontPath}`)
+      }
+
+      font = await newDoc.embedFont(readFileSync(fontPath), { subset: false })
+    }
+
+    fontCache.set(fontKey, font)
+  }
+
+  return {
+    font,
+    usesCustomFont: !isStandardFontKey(fontKey),
+  }
+}
+
+function isStandardFontKey(fontKey: EmbeddedFontKey): fontKey is StandardFonts {
+  return Object.values(StandardFonts).includes(fontKey as StandardFonts)
+}
+
+function resolveFontKey(
+  block: TextBlock,
+  family: string,
+  weight: "normal" | "bold",
+  style: "normal" | "italic",
+  text: string
+): EmbeddedFontKey {
+  const fontNames = block.spans
+    .map((span) =>
+      `${span.fontName ?? ""} ${span.fontFamily ?? ""}`.toLowerCase()
+    )
+    .join(" ")
+
+  const opaqueHint = `${family} ${fontNames} ${text}`.toLowerCase()
+  const wantsHeavy = weight === "bold" && referenceLooksHeavy(block)
+
+  if (opaqueHint.includes("poppins")) {
+    if (style === "italic") return "poppins-italic"
+    if (wantsHeavy || opaqueHint.includes("black")) return "poppins-black"
+    if (weight === "bold" || opaqueHint.includes("bold")) return "poppins-bold"
+    return "poppins-regular"
+  }
+
+  if (opaqueHint.includes("glacial")) {
+    if (style === "italic") return "glacial-italic"
+    if (weight === "bold" || opaqueHint.includes("bold")) return "glacial-bold"
+    return "glacial-regular"
+  }
+
+  if (blockLooksLikeDisplayHeading(block)) {
+    if (style === "italic") return "poppins-italic"
+    return wantsHeavy ? "poppins-black" : "poppins-bold"
+  }
+
+  if (blockLooksLikeSubheading(block)) {
+    if (style === "italic") return "glacial-italic"
+    if (weight === "bold") return "glacial-bold"
+    return "glacial-regular"
+  }
+
+  if (opaqueHint.includes("noto") || family.includes("sans")) {
+    if (style === "italic") return "glacial-italic"
+    if (wantsHeavy || opaqueHint.includes("black")) return "poppins-bold"
+    if (weight === "bold" || opaqueHint.includes("bold")) return "poppins-bold"
+    return "glacial-regular"
+  }
 
   let combined = family
   if (weight === "bold") combined += " bold"
   if (style === "italic") combined += " italic"
+  return mapFontToStandard(combined, family)
+}
 
-  const standardFont = mapFontToStandard(combined, family)
+function referenceLooksHeavy(block: TextBlock): boolean {
+  const primarySpan = getPrimaryTextSpan(block)
+  const text = primarySpan?.text.trim() ?? block.text.trim()
+  return text.length > 0 && text === text.toUpperCase() && text.length <= 40
+}
 
-  let font = fontCache.get(standardFont)
-  if (!font) {
-    font = await newDoc.embedFont(standardFont)
-    fontCache.set(standardFont, font)
-  }
-  return font
+function blockLooksLikeDisplayHeading(block: TextBlock): boolean {
+  const primarySpan = getPrimaryTextSpan(block)
+  const text = primarySpan?.text.trim() ?? block.text.trim()
+  const fontSize = primarySpan?.fontSize ?? 0
+  return fontSize >= 16 || (text === text.toUpperCase() && text.length <= 28)
+}
+
+function blockLooksLikeSubheading(block: TextBlock): boolean {
+  const primarySpan = getPrimaryTextSpan(block)
+  const text = primarySpan?.text.trim() ?? block.text.trim()
+  const fontSize = primarySpan?.fontSize ?? 0
+  return fontSize >= 11 && text.length <= 60 && !block.style.bullet
+}
+
+function getPrimaryTextSpan(block: TextBlock) {
+  return (
+    [...block.spans]
+      .sort((left, right) => {
+        const leftScore = left.text.trim().length * left.bbox.width
+        const rightScore = right.text.trim().length * right.bbox.width
+        return rightScore - leftScore
+      })
+      .find((span) => span.text.trim().length > 0) ?? block.spans[0]
+  )
 }
 
 export async function generateTranslatedPdf(
@@ -212,7 +547,8 @@ export async function generateTranslatedPdf(
 
   const origDoc = await PDFDocument.load(originalPdfBuffer)
   const newDoc = await PDFDocument.create()
-  const fontCache = new Map<StandardFonts, PDFFont>()
+  newDoc.registerFontkit(fontkit)
+  const fontCache = new Map<EmbeddedFontKey, PDFFont>()
 
   const origPages = origDoc.getPages()
 
@@ -233,43 +569,39 @@ export async function generateTranslatedPdf(
       const translation = translationMap.get(block.id)
       if (!translation || translation.preserveOriginal) continue
 
-      const font = await resolveFont(block, newDoc, fontCache)
-      const firstSpan = block.spans[0]
-      const defaultFontSize = firstSpan?.fontSize ?? 12
-      const colorHex = firstSpan?.color ?? "#000000"
+      const { font, usesCustomFont } = await resolveFont(
+        block,
+        newDoc,
+        fontCache
+      )
+      const referenceSpan = getPrimaryTextSpan(block)
+      const defaultFontSize = referenceSpan?.fontSize ?? 12
+      const colorHex = referenceSpan?.color ?? "#000000"
       const color = parseHexColor(colorHex)
 
-      const safeText = sanitizeForWinAnsi(translation.translatedText)
+      const safeText = sanitizeText(translation.translatedText, usesCustomFont)
       if (safeText.trim().length === 0) continue
 
       eraseArea(newPage, block.bbox)
 
-      const baselineY =
-        firstSpan?.bbox.y ?? block.bbox.y + block.bbox.height * 0.7
-      let fontSize = defaultFontSize
+      const innerWidth = Math.max(block.bbox.width - 4, 8)
+      const innerHeight = Math.max(block.bbox.height - 4, defaultFontSize)
 
-      try {
-        let textWidth = font.widthOfTextAtSize(safeText, fontSize)
-        const maxWidth = block.bbox.width
-        while (textWidth > maxWidth && fontSize > MIN_FONT_SIZE) {
-          fontSize -= 0.5
-          textWidth = font.widthOfTextAtSize(safeText, fontSize)
-        }
-        if (textWidth > maxWidth) {
-          warnings.push(`Text overflow in ${block.id}`)
-        }
-      } catch {
-        fontSize = Math.min(defaultFontSize, 10)
+      const { fontSize, lines, overflow } = fitFontSize(
+        safeText,
+        innerWidth,
+        innerHeight,
+        font,
+        defaultFontSize,
+        Boolean(block.style.bullet)
+      )
+
+      if (overflow) {
+        warnings.push(`Text overflow in ${block.id}`)
       }
 
       try {
-        newPage.drawText(safeText, {
-          x: block.bbox.x + 2,
-          y: baselineY,
-          size: fontSize,
-          font,
-          color: rgb(color.r, color.g, color.b),
-        })
+        drawLines(newPage, block, block.bbox, lines, font, fontSize, color)
       } catch {
         continue
       }
