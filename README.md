@@ -1,21 +1,42 @@
-# shadcn/ui monorepo template
+# OpenTranslate
 
-This is a Next.js monorepo template with shadcn/ui.
+PDF resume translation app built with Bun, Next.js, shadcn/ui, `unpdf`, and `pdf-lib`.
 
-## Adding components
+## Local development
 
-To add components to your app, run the following command at the root of your `web` app:
+From the repo root:
 
 ```bash
-pnpm dlx shadcn@latest add button -c apps/web
+bun install
+bun dev
 ```
 
-This will place the ui components in the `packages/ui/src/components` directory.
+The root `bun dev` command runs the web app through Portless so it does not take over `localhost:3000`.
 
-## Using components
+If Portless has not started its proxy on your machine yet, start it once in another terminal:
 
-To use the components in your app, import them from the `ui` package.
-
-```tsx
-import { Button } from "@workspace/ui/components/button";
+```bash
+cd apps/web
+./node_modules/.bin/portless proxy start -p 1355 --https
 ```
+
+Then `bun dev` will serve the app at a stable local URL like:
+
+```text
+https://open-translate.localhost:1355
+```
+
+## Manual PDF regression loop
+
+Use the real PDF pipeline directly against a local resume file:
+
+```bash
+bun run --cwd apps/web manual:regression --input ../../resume-test.pdf --source en --target fr
+```
+
+Artifacts are written to `testing/manual-regression/` and ignored by git. Each run emits:
+
+- the translated PDF
+- a `summary.json` file with page count, block count, and warnings
+
+This gives a repeatable way to compare before/after output while iterating on PDF fidelity.
