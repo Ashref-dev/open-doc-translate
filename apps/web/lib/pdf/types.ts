@@ -8,6 +8,7 @@ export type BBox = {
 export type TextSpan = {
   text: string
   bbox: BBox
+  fontName?: string
   fontFamily?: string
   fontSize: number
   color: string
