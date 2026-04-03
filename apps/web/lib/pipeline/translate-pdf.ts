@@ -22,6 +22,7 @@ export async function translatePdf(
         page.textBlocks = clusterTextItems(
           page.rawItems,
           page.rawStyles,
+          page.width,
           page.height,
           document.pages.indexOf(page)
         )

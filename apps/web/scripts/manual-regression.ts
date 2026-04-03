@@ -50,6 +50,7 @@ async function main() {
     page.textBlocks = clusterTextItems(
       page.rawItems,
       page.rawStyles,
+      page.width,
       page.height,
       pageIndex
     )
@@ -77,6 +78,18 @@ async function main() {
 
   const outputPdf = join(runDir, `${stem}_${target}.pdf`)
   const summaryPath = join(runDir, "summary.json")
+  const warningDetails = warnings.map((warning) => {
+    const blockId = warning.replace(/^Text overflow in\s+/, "")
+    const block = allBlocks.find((entry) => entry.id === blockId)
+    return {
+      warning,
+      blockId,
+      text: block?.text,
+      role: block?.role,
+      region: block?.region,
+      bbox: block?.bbox,
+    }
+  })
 
   writeFileSync(outputPdf, buffer)
   writeFileSync(
@@ -91,6 +104,7 @@ async function main() {
         blockCount: allBlocks.length,
         warningCount: warnings.length,
         warnings,
+        warningDetails,
       },
       null,
       2

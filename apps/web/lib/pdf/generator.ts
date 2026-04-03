@@ -8,7 +8,7 @@ import {
   type PDFFont,
   type PDFPage,
 } from "pdf-lib"
-import type { DocumentModel, TextBlock, BBox } from "@/lib/pdf/types"
+import type { DocumentModel, TextBlock, BBox, BlockRole } from "@/lib/pdf/types"
 import type { TranslatedBlock } from "@/lib/ai/types"
 import { mapFontToStandard } from "@/lib/pdf/font-mapper"
 
@@ -97,6 +97,12 @@ function parseHexColor(hex: string): { r: number; g: number; b: number } {
 type WrappedLine = {
   text: string
   indent: number
+}
+
+type LayoutPlan = {
+  horizontalPadding: number
+  verticalPadding: number
+  lineHeightRatio: number
 }
 
 function measureTextWidth(
@@ -207,10 +213,13 @@ function wrapText(
   maxWidth: number,
   font: PDFFont,
   fontSize: number,
-  bullet: boolean
+  bullet: boolean,
+  preserveLineBreaks: boolean
 ): WrappedLine[] {
   const lines: WrappedLine[] = []
-  const paragraphs = text.split("\n")
+  const paragraphs = preserveLineBreaks
+    ? text.split("\n")
+    : [text.replace(/\s*\n\s*/g, " ")]
 
   for (const paragraph of paragraphs) {
     if (paragraph.trim().length === 0) {
@@ -300,11 +309,19 @@ function fitFontSize(
   innerHeight: number,
   font: PDFFont,
   startSize: number,
-  bullet: boolean
+  bullet: boolean,
+  lineHeightRatio: number,
+  preserveLineBreaks: boolean
 ): { fontSize: number; lines: WrappedLine[]; overflow: boolean } {
   let fontSize = Math.min(startSize, 24)
-  let lines = wrapText(text, innerWidth, font, fontSize, bullet)
-  const lineHeightRatio = 1.2
+  let lines = wrapText(
+    text,
+    innerWidth,
+    font,
+    fontSize,
+    bullet,
+    preserveLineBreaks
+  )
 
   while (fontSize > MIN_FONT_SIZE) {
     const totalHeight = lines.length * fontSize * lineHeightRatio
@@ -321,11 +338,42 @@ function fitFontSize(
     }
 
     fontSize -= 0.5
-    lines = wrapText(text, innerWidth, font, fontSize, bullet)
+    lines = wrapText(
+      text,
+      innerWidth,
+      font,
+      fontSize,
+      bullet,
+      preserveLineBreaks
+    )
   }
 
-  lines = wrapText(text, innerWidth, font, fontSize, bullet)
+  lines = wrapText(text, innerWidth, font, fontSize, bullet, preserveLineBreaks)
   return { fontSize, lines, overflow: true }
+}
+
+function getLayoutPlan(block: TextBlock): LayoutPlan {
+  if (block.role === "section_header") {
+    return { horizontalPadding: 1, verticalPadding: 2, lineHeightRatio: 1.05 }
+  }
+
+  if (block.role === "summary") {
+    return { horizontalPadding: 1, verticalPadding: 2, lineHeightRatio: 1.12 }
+  }
+
+  if (block.role === "metadata_row" || block.style.compact) {
+    return { horizontalPadding: 1, verticalPadding: 1, lineHeightRatio: 1.08 }
+  }
+
+  return { horizontalPadding: 2, verticalPadding: 2, lineHeightRatio: 1.2 }
+}
+
+function isTightSidebarSectionHeader(block: TextBlock): boolean {
+  return (
+    block.role === "section_header" &&
+    block.region === "sidebar" &&
+    block.bbox.width <= 70
+  )
 }
 
 function eraseArea(page: PDFPage, bbox: BBox) {
@@ -380,9 +428,10 @@ function drawLines(
   lines: WrappedLine[],
   font: PDFFont,
   fontSize: number,
+  lineHeightRatio: number,
   color: { r: number; g: number; b: number }
 ) {
-  const lineHeight = fontSize * 1.2
+  const lineHeight = fontSize * lineHeightRatio
   const startY = getDrawStartY(block, bbox, font, fontSize)
 
   for (let i = 0; i < lines.length; i++) {
@@ -477,6 +526,10 @@ function resolveFontKey(
     return "glacial-regular"
   }
 
+  if (block.role === "summary") {
+    return "glacial-italic"
+  }
+
   if (blockLooksLikeDisplayHeading(block)) {
     if (style === "italic") return "poppins-italic"
     return wantsHeavy ? "poppins-black" : "poppins-bold"
@@ -515,10 +568,42 @@ function blockLooksLikeDisplayHeading(block: TextBlock): boolean {
 }
 
 function blockLooksLikeSubheading(block: TextBlock): boolean {
+  if (block.role === "section_header") return true
   const primarySpan = getPrimaryTextSpan(block)
   const text = primarySpan?.text.trim() ?? block.text.trim()
   const fontSize = primarySpan?.fontSize ?? 0
   return fontSize >= 11 && text.length <= 60 && !block.style.bullet
+}
+
+function getFontSizeFloor(role: BlockRole): number {
+  if (role === "display_heading") return 12
+  if (role === "section_header") return 10
+  if (role === "summary") return 8.5
+  if (role === "metadata_row") return 8.5
+  if (role === "grid_item" || role === "language_item") return 8.5
+  return MIN_FONT_SIZE
+}
+
+function compactSectionHeaderText(text: string): string {
+  return text
+    .replace(/\bde\b/giu, "de")
+    .replace(/\bd['’]\s*/giu, "d'")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function normalizeTranslatedText(block: TextBlock, text: string): string {
+  let normalized = text.replace(/[ \t]+/g, " ").trim()
+
+  if (block.role === "section_header") {
+    normalized = compactSectionHeaderText(normalized)
+  }
+
+  if (block.style.preserveLineBreaks) {
+    return normalized.replace(/\s*\n\s*/g, "\n")
+  }
+
+  return normalized.replace(/\s*\n\s*/g, " ")
 }
 
 function getPrimaryTextSpan(block: TextBlock) {
@@ -578,30 +663,112 @@ export async function generateTranslatedPdf(
       const defaultFontSize = referenceSpan?.fontSize ?? 12
       const colorHex = referenceSpan?.color ?? "#000000"
       const color = parseHexColor(colorHex)
+      const layoutPlan = getLayoutPlan(block)
+      const fontSizeFloor = getFontSizeFloor(block.role)
 
-      const safeText = sanitizeText(translation.translatedText, usesCustomFont)
+      const normalizedText = normalizeTranslatedText(
+        block,
+        translation.translatedText
+      )
+      const safeText = sanitizeText(normalizedText, usesCustomFont)
       if (safeText.trim().length === 0) continue
 
       eraseArea(newPage, block.bbox)
 
-      const innerWidth = Math.max(block.bbox.width - 4, 8)
-      const innerHeight = Math.max(block.bbox.height - 4, defaultFontSize)
+      const innerWidth = Math.max(
+        block.bbox.width - layoutPlan.horizontalPadding * 2,
+        8
+      )
+      const innerHeight = Math.max(
+        block.bbox.height - layoutPlan.verticalPadding * 2,
+        defaultFontSize
+      )
 
-      const { fontSize, lines, overflow } = fitFontSize(
+      let currentPlan = layoutPlan
+      let { fontSize, lines, overflow } = fitFontSize(
         safeText,
         innerWidth,
         innerHeight,
         font,
         defaultFontSize,
-        Boolean(block.style.bullet)
+        Boolean(block.style.bullet),
+        currentPlan.lineHeightRatio,
+        Boolean(block.style.preserveLineBreaks)
       )
+
+      if (isTightSidebarSectionHeader(block) && lines.length > 1) {
+        const joined = safeText.replace(/\s+/g, " ").trim()
+        const retry = fitFontSize(
+          joined,
+          innerWidth,
+          innerHeight,
+          font,
+          defaultFontSize,
+          false,
+          1,
+          false
+        )
+        fontSize = retry.fontSize
+        lines = retry.lines
+        overflow = retry.overflow
+      }
+
+      while (overflow && currentPlan.lineHeightRatio > 1.02) {
+        currentPlan = {
+          ...currentPlan,
+          lineHeightRatio: Math.max(1.02, currentPlan.lineHeightRatio - 0.04),
+        }
+        const retry = fitFontSize(
+          safeText,
+          innerWidth,
+          innerHeight,
+          font,
+          defaultFontSize,
+          Boolean(block.style.bullet),
+          currentPlan.lineHeightRatio,
+          Boolean(block.style.preserveLineBreaks)
+        )
+        fontSize = retry.fontSize
+        lines = retry.lines
+        overflow = retry.overflow
+        if (!overflow) break
+      }
+
+      if (fontSize < fontSizeFloor) {
+        fontSize = fontSizeFloor
+        lines = wrapText(
+          safeText,
+          innerWidth,
+          font,
+          fontSize,
+          Boolean(block.style.bullet),
+          Boolean(block.style.preserveLineBreaks)
+        )
+        const totalHeight =
+          lines.length * fontSize * currentPlan.lineHeightRatio
+        const maxLineWidth = lines.reduce(
+          (width, line) =>
+            Math.max(width, getWrappedLineWidth(line, font, fontSize)),
+          0
+        )
+        overflow = totalHeight > innerHeight || maxLineWidth > innerWidth
+      }
 
       if (overflow) {
         warnings.push(`Text overflow in ${block.id}`)
       }
 
       try {
-        drawLines(newPage, block, block.bbox, lines, font, fontSize, color)
+        drawLines(
+          newPage,
+          block,
+          block.bbox,
+          lines,
+          font,
+          fontSize,
+          currentPlan.lineHeightRatio,
+          color
+        )
       } catch {
         continue
       }
