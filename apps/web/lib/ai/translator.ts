@@ -19,6 +19,8 @@ const URL_REGEX = /\b(?:https?:\/\/|www\.)\S+\b/giu
 const PHONE_REGEX = /(?<!\w)(?:\+?\d[\d\s().\-/]{6,}\d)(?!\w)/g
 const NUMERIC_DATE_REGEX = /\b\d{1,4}(?:[./-]\d{1,4})+\b/g
 const YEAR_REGEX = /\b(?:19|20)\d{2}\b/g
+const DATE_RANGE_REGEX =
+  /\b(?:[A-ZÀ-ÖØ-Þ][\p{L}.]+\s+)?(?:19|20)?\d{2,4}\s*[-–—/]\s*(?:[A-ZÀ-ÖØ-Þ][\p{L}.]+\s+)?(?:PRESENT|EN COURS|CURRENT|(?:19|20)?\d{2,4})\b/giu
 
 type ProtectedToken = {
   placeholder: string
@@ -30,6 +32,48 @@ type PreparedTranslationBlock = {
   promptBlock: TranslationBlock
   protectedTokens: ProtectedToken[]
 }
+
+const COMPACT_LABEL_MAP: Record<string, Record<string, string>> = {
+  fr: {
+    CONTACT: "CONTACT",
+    SKILLS: "APTITUDES",
+    INTERESTS: "INTÉRÊTS",
+    LANGUAGES: "LANGUES",
+    EDUCATION: "FORMATION",
+    "PROFESSIONAL EXPERIENCE": "EXPÉRIENCE PROFESSIONNELLE",
+    PRESENT: "EN COURS",
+  },
+}
+
+const FRENCH_METADATA_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bjanvier\b/giu, "JANV."],
+  [/\bf[ée]vrier\b/giu, "FÉVR."],
+  [/\bmars\b/giu, "MARS"],
+  [/\bavril\b/giu, "AVR."],
+  [/\bmai\b/giu, "MAI"],
+  [/\bjuin\b/giu, "JUIN"],
+  [/\bjuillet\b/giu, "JUIL."],
+  [/\bao[uû]t\b/giu, "AOÛT"],
+  [/\bseptembre\b/giu, "SEPT."],
+  [/\boctobre\b/giu, "OCT."],
+  [/\bnovembre\b/giu, "NOV."],
+  [/\bd[ée]cembre\b/giu, "DÉC."],
+  [/\bjanuary\b/giu, "JAN."],
+  [/\bfebruary\b/giu, "FEB."],
+  [/\bmarch\b/giu, "MAR."],
+  [/\bapril\b/giu, "APR."],
+  [/\bmay\b/giu, "MAY"],
+  [/\bjune\b/giu, "JUNE"],
+  [/\bjuly\b/giu, "JUL."],
+  [/\baugust\b/giu, "AUG."],
+  [/\bseptember\b/giu, "SEPT."],
+  [/\boctober\b/giu, "OCT."],
+  [/\bnovember\b/giu, "NOV."],
+  [/\bdecember\b/giu, "DEC."],
+  [/\bpresent\b/giu, "EN COURS"],
+  [/\bcurrent\b/giu, "EN COURS"],
+  [/\ben cours\b/giu, "EN COURS"],
+]
 
 type OpenRouterMessage = {
   role: "system" | "user" | "assistant"
@@ -109,7 +153,7 @@ function shouldProtectFragileSpan(
   }
 
   if (!isStructuredContactText(block.text) || trimmed.length !== 1) {
-    return false
+    return block.role === "metadata_row" && isSeparatorLikeText(trimmed)
   }
 
   const previous = block.spans[spanIndex - 1]?.text.trim() ?? ""
@@ -128,7 +172,7 @@ function protectFragileSpans(block: TextBlock): {
   text: string
   protectedTokens: ProtectedToken[]
 } {
-  let cursor = 0
+  let blockCursor = 0
   let text = ""
   const protectedTokens: ProtectedToken[] = []
 
@@ -136,12 +180,12 @@ function protectFragileSpans(block: TextBlock): {
     const span = block.spans[index]
     if (!span || span.text.length === 0) continue
 
-    const start = block.text.indexOf(span.text, cursor)
+    const start = block.text.indexOf(span.text, blockCursor)
     if (start === -1) {
       continue
     }
 
-    text += block.text.slice(cursor, start)
+    text += block.text.slice(blockCursor, start)
 
     if (shouldProtectFragileSpan(block, index)) {
       const placeholder = toPlaceholder(protectedTokens.length)
@@ -151,10 +195,10 @@ function protectFragileSpans(block: TextBlock): {
       text += span.text
     }
 
-    cursor = start + span.text.length
+    blockCursor = start + span.text.length
   }
 
-  text += block.text.slice(cursor)
+  text += block.text.slice(blockCursor)
 
   return { text, protectedTokens }
 }
@@ -177,10 +221,49 @@ function restoreProtectedTokens(
   text: string,
   protectedTokens: ProtectedToken[]
 ): string {
-  return protectedTokens.reduce(
-    (result, token) => result.split(token.placeholder).join(token.value),
-    text
-  )
+  let result = text
+  for (const token of [...protectedTokens].reverse()) {
+    result = result.split(token.placeholder).join(token.value)
+  }
+  return result
+}
+
+function normalizeWhitespace(text: string): string {
+  return text
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .trim()
+}
+
+function postProcessTranslation(
+  block: TranslationBlock,
+  text: string,
+  targetLang: SupportedLanguageCode
+): string {
+  let result = normalizeWhitespace(text)
+
+  if (targetLang === "fr" && block.styleHint === "metadata_row") {
+    for (const [pattern, replacement] of FRENCH_METADATA_REPLACEMENTS) {
+      result = result.replace(pattern, replacement)
+    }
+  }
+
+  return result
+}
+
+function applyCompactLabelMap(
+  block: TranslationBlock,
+  targetLang: SupportedLanguageCode
+): string | null {
+  const mapping = COMPACT_LABEL_MAP[targetLang]
+  if (!mapping) return null
+
+  const key = normalizeWhitespace(block.text).toUpperCase()
+  if (block.styleHint === "section_header" || block.styleHint === "label") {
+    return mapping[key] ?? null
+  }
+
+  return null
 }
 
 function getWordCountOutsideStructuredTokens(text: string): number {
@@ -377,13 +460,19 @@ async function translateBatch(
   const resultMap = new Map(results.map((r) => [r.id, r]))
 
   return blocks.map((block) => {
+    const compactMapped = applyCompactLabelMap(block.original, targetLang)
     const result = resultMap.get(block.original.id)
     if (result) {
       return {
         ...result,
-        translatedText: restoreProtectedTokens(
-          result.translatedText,
-          block.protectedTokens
+        translatedText: postProcessTranslation(
+          block.original,
+          compactMapped ??
+            restoreProtectedTokens(
+              result.translatedText,
+              block.protectedTokens
+            ),
+          targetLang
         ),
       }
     }
@@ -395,7 +484,11 @@ async function translateBatch(
 
     return {
       id: block.original.id,
-      translatedText: fallbackText,
+      translatedText: postProcessTranslation(
+        block.original,
+        fallbackText,
+        targetLang
+      ),
       preserveOriginal: true,
       notes: [
         "Translation missing from API response — original text preserved",
