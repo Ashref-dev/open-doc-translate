@@ -20,7 +20,26 @@ export type BlockStyle = {
   align?: "left" | "center" | "right"
   lineHeight?: number
   bullet?: boolean
+  compact?: boolean
+  preserveLineBreaks?: boolean
+  gridColumn?: number
+  gridColumns?: number
 }
+
+export type BlockRegion = "full" | "sidebar" | "main"
+
+export type BlockRole =
+  | "display_heading"
+  | "section_header"
+  | "summary"
+  | "entry_title"
+  | "metadata_row"
+  | "sidebar_item"
+  | "grid_item"
+  | "contact_item"
+  | "language_item"
+  | "list_item"
+  | "body"
 
 export type TextBlock = {
   id: string
@@ -29,6 +48,9 @@ export type TextBlock = {
   text: string
   spans: TextSpan[]
   style: BlockStyle
+  role: BlockRole
+  region: BlockRegion
+  groupId?: string
   readingOrder: number
 }
 

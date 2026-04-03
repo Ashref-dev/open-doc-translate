@@ -5,6 +5,8 @@ import type {
   TextSpan,
   BBox,
   BlockStyle,
+  BlockRegion,
+  BlockRole,
 } from "@/lib/pdf/types"
 
 type LineItem = {
@@ -20,6 +22,7 @@ type LineItem = {
 export function clusterTextItems(
   items: RawTextItem[],
   styles: Record<string, RawTextStyle>,
+  pageWidth: number,
   _pageHeight: number,
   pageIndex: number
 ): TextBlock[] {
@@ -31,10 +34,11 @@ export function clusterTextItems(
 
   const lines = groupIntoLines(lineItems)
   const lineBlocks = lines.map((line, index) =>
-    lineToTextBlock(line, styles, pageIndex, index)
+    lineToTextBlock(line, styles, pageIndex, index, pageWidth)
   )
 
-  return mergeAdjacentBlocks(lineBlocks)
+  const mergedBlocks = mergeAdjacentBlocks(lineBlocks)
+  return assignGridGroups(mergedBlocks)
 }
 
 function mergeAdjacentBlocks(blocks: TextBlock[]): TextBlock[] {
@@ -153,6 +157,9 @@ function mergeBlocks(previous: TextBlock, current: TextBlock): TextBlock {
     style: {
       ...previous.style,
       bullet: previous.style.bullet || current.style.bullet,
+      compact: previous.style.compact || current.style.compact,
+      preserveLineBreaks:
+        previous.style.preserveLineBreaks || current.style.preserveLineBreaks,
     },
   }
 }
@@ -235,6 +242,8 @@ function looksStructured(text: string): boolean {
 }
 
 function looksHeadingLike(block: TextBlock): boolean {
+  if (block.region === "sidebar" && block.bbox.width < 170) return false
+
   const text = block.text.trim()
   const primarySpan = getPrimarySpan(block)
   const fontSize = primarySpan?.fontSize ?? 0
@@ -365,7 +374,8 @@ function lineToTextBlock(
   items: LineItem[],
   styles: Record<string, RawTextStyle>,
   pageIndex: number,
-  readingOrder: number
+  readingOrder: number,
+  pageWidth: number
 ): TextBlock {
   const sorted = [...items].sort((a, b) => a.x - b.x)
   const contentItems = sorted.filter(
@@ -417,6 +427,17 @@ function lineToTextBlock(
     bullet: /^[\s]*[•\-–—▪▸►◦‣⁃>*]/.test(text),
   }
 
+  const region = inferRegion(bbox, pageWidth)
+  const role = inferRole(text, spans, bbox, region, blockStyle)
+  blockStyle.compact =
+    region === "sidebar" || role === "section_header" || role === "metadata_row"
+  blockStyle.preserveLineBreaks =
+    role === "metadata_row" || role === "grid_item" || role === "language_item"
+  if (role === "grid_item") {
+    blockStyle.gridColumn = inferGridColumn(bbox, pageWidth)
+    blockStyle.gridColumns = 2
+  }
+
   return {
     id: `line-${pageIndex}-${readingOrder}`,
     page: pageIndex,
@@ -424,8 +445,163 @@ function lineToTextBlock(
     text,
     spans,
     style: blockStyle,
+    role,
+    region,
     readingOrder,
   }
+}
+
+function inferRegion(bbox: BBox, pageWidth: number): BlockRegion {
+  const centerX = bbox.x + bbox.width / 2
+  if (bbox.width >= pageWidth * 0.75) return "full"
+  if (centerX < pageWidth * 0.42) return "sidebar"
+  return "main"
+}
+
+function inferRole(
+  text: string,
+  spans: TextSpan[],
+  bbox: BBox,
+  region: BlockRegion,
+  style: BlockStyle
+): BlockRole {
+  const trimmed = text.trim()
+  const primarySpan =
+    [...spans]
+      .sort((left, right) => right.fontSize - left.fontSize)
+      .find((span) => span.text.trim().length > 0) ?? spans[0]
+  const fontSize = primarySpan?.fontSize ?? 0
+  const isAllCaps = trimmed.length > 0 && trimmed === trimmed.toUpperCase()
+
+  if (
+    fontSize >= 18 ||
+    (isAllCaps && trimmed.length <= 30 && region === "full")
+  ) {
+    return "display_heading"
+  }
+
+  if (looksSectionHeader(trimmed, fontSize, region)) {
+    return "section_header"
+  }
+
+  if (region === "full" && bbox.height >= fontSize * 3) {
+    return "summary"
+  }
+
+  if (isStructuredContactToken(trimmed)) {
+    return "contact_item"
+  }
+
+  if (looksMetadataRow(trimmed)) {
+    return "metadata_row"
+  }
+
+  if (looksEntryTitle(trimmed, fontSize, region)) {
+    return "entry_title"
+  }
+
+  if (region === "sidebar" && looksLanguageItem(trimmed)) {
+    return "language_item"
+  }
+
+  if (region === "sidebar" && looksGridItem(trimmed, bbox)) {
+    return "grid_item"
+  }
+
+  if (style.bullet) {
+    return "list_item"
+  }
+
+  if (region === "sidebar") {
+    return "sidebar_item"
+  }
+
+  return "body"
+}
+
+function looksSectionHeader(
+  text: string,
+  fontSize: number,
+  region: BlockRegion
+): boolean {
+  if (text.length === 0) return false
+  const normalized = text.toUpperCase()
+  const known = new Set([
+    "CONTACT",
+    "SKILLS",
+    "INTERESTS",
+    "LANGUAGES",
+    "PROFESSIONAL EXPERIENCE",
+    "EDUCATION",
+  ])
+
+  if (known.has(normalized)) return true
+  return (
+    text === normalized &&
+    text.length <= 40 &&
+    fontSize >= (region === "sidebar" ? 12 : 14)
+  )
+}
+
+function looksEntryTitle(
+  text: string,
+  fontSize: number,
+  region: BlockRegion
+): boolean {
+  if (region !== "main") return false
+  if (text.length === 0 || text.length > 80) return false
+  return (
+    fontSize >= 11.5 &&
+    /[A-Za-zÀ-ÖØ-öø-ÿ]/u.test(text) &&
+    !looksMetadataRow(text)
+  )
+}
+
+function looksMetadataRow(text: string): boolean {
+  return /(?:19|20)\d{2}|PRESENT|EN COURS|JUNE|JUIL|NOV|DECEMBER|DÉCEMBRE|\/| - /iu.test(
+    text
+  )
+}
+
+function looksLanguageItem(text: string): boolean {
+  return /LEVEL|NIVEAU|B1|B2|C1|C2|A1|A2/i.test(text)
+}
+
+function looksGridItem(text: string, bbox: BBox): boolean {
+  return text.length <= 24 && bbox.width < 120 && /\p{L}/u.test(text)
+}
+
+function inferGridColumn(bbox: BBox, pageWidth: number): number {
+  return bbox.x + bbox.width / 2 < pageWidth * 0.18 ? 0 : 1
+}
+
+function assignGridGroups(blocks: TextBlock[]): TextBlock[] {
+  const result = [...blocks]
+  let groupCounter = 0
+
+  for (let index = 0; index < result.length; index++) {
+    const block = result[index]
+    if (!block || block.role !== "grid_item" || block.groupId) continue
+
+    const partnerIndex = result.findIndex((candidate, candidateIndex) => {
+      if (candidateIndex === index || !candidate) return false
+      if (candidate.role !== "grid_item" || candidate.region !== block.region)
+        return false
+      if (candidate.groupId) return false
+      return Math.abs(candidate.bbox.y - block.bbox.y) <= 2
+    })
+
+    if (partnerIndex === -1) continue
+
+    const groupId = `grid-${groupCounter++}`
+    result[index] = { ...block, groupId }
+    const partner = result[partnerIndex]
+    if (partner) {
+      result[partnerIndex] = { ...partner, groupId }
+    }
+  }
+
+  return result
 }
 
 function shouldKeepItem(str: string): boolean {
