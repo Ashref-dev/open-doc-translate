@@ -13,7 +13,16 @@ import type { TranslatedBlock } from "@/lib/ai/types"
 import { mapFontToStandard } from "@/lib/pdf/font-mapper"
 
 const MIN_FONT_SIZE = 6
-const FONT_ASSET_DIR = join(process.cwd(), "assets/fonts")
+const FONT_ASSET_DIR = (() => {
+  const candidates = [
+    join(process.cwd(), "assets/fonts"),
+    join(process.cwd(), "apps/web/assets/fonts"),
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  return candidates[0]!
+})()
 
 type EmbeddedFontKey =
   | StandardFonts
