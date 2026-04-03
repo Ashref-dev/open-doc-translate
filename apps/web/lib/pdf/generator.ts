@@ -24,6 +24,8 @@ const FONT_ASSET_DIR = (() => {
   return candidates[0]!
 })()
 
+type FontClassification = "serif" | "sans-serif" | "monospace" | "unknown"
+
 type EmbeddedFontKey =
   | StandardFonts
   | "glacial-regular"
@@ -33,6 +35,10 @@ type EmbeddedFontKey =
   | "poppins-bold"
   | "poppins-italic"
   | "poppins-black"
+  | "liberation-serif-regular"
+  | "liberation-serif-bold"
+  | "liberation-serif-italic"
+  | "liberation-serif-bolditalic"
 
 const CUSTOM_FONT_FILES: Partial<Record<EmbeddedFontKey, string>> = {
   "glacial-bold": "GlacialIndifference-Bold.ttf",
@@ -42,6 +48,104 @@ const CUSTOM_FONT_FILES: Partial<Record<EmbeddedFontKey, string>> = {
   "poppins-bold": "Poppins-Bold.ttf",
   "poppins-italic": "Poppins-Italic.ttf",
   "poppins-regular": "Poppins-Regular.ttf",
+  "liberation-serif-regular": "LiberationSerif-Regular.ttf",
+  "liberation-serif-bold": "LiberationSerif-Bold.ttf",
+  "liberation-serif-italic": "LiberationSerif-Italic.ttf",
+  "liberation-serif-bolditalic": "LiberationSerif-BoldItalic.ttf",
+}
+
+const SERIF_FONT_HINTS = [
+  "times",
+  "serif",
+  "garamond",
+  "georgia",
+  "palatino",
+  "cambria",
+  "book antiqua",
+  "bookman",
+  "century",
+  "didot",
+  "bodoni",
+  "baskerville",
+  "caslon",
+  "minion",
+  "charter",
+  "utopia",
+  "liberation serif",
+  "tinos",
+  "noto serif",
+  "source serif",
+  "pt serif",
+  "ibm plex serif",
+  "lora",
+  "merriweather",
+  "playfair",
+  "crimson",
+  "libre baskerville",
+]
+
+const SANS_FONT_HINTS = [
+  "arial",
+  "helvetica",
+  "sans",
+  "poppins",
+  "glacial",
+  "noto sans",
+  "roboto",
+  "open sans",
+  "lato",
+  "montserrat",
+  "inter",
+  "calibri",
+  "segoe",
+  "verdana",
+  "tahoma",
+  "trebuchet",
+  "source sans",
+  "pt sans",
+  "ibm plex sans",
+  "nunito",
+  "raleway",
+  "ubuntu",
+  "fira sans",
+]
+
+function classifyFontFamily(block: TextBlock): FontClassification {
+  const hints = block.spans
+    .map((span) =>
+      `${span.fontName ?? ""} ${span.fontFamily ?? ""}`.toLowerCase()
+    )
+    .join(" ")
+
+  const primaryFamily = (
+    getPrimaryTextSpan(block)?.fontFamily ?? ""
+  ).toLowerCase()
+
+  const combined = `${hints} ${primaryFamily}`
+
+  if (
+    combined.includes("monospace") ||
+    combined.includes("courier") ||
+    combined.includes("mono")
+  ) {
+    return "monospace"
+  }
+
+  for (const hint of SANS_FONT_HINTS) {
+    if (combined.includes(hint)) return "sans-serif"
+  }
+
+  if (primaryFamily === "sans-serif") return "sans-serif"
+
+  for (const hint of SERIF_FONT_HINTS) {
+    if (combined.includes(hint)) return "serif"
+  }
+
+  if (primaryFamily === "serif") return "serif"
+
+  if (primaryFamily === "") return "sans-serif"
+
+  return "unknown"
 }
 
 const WINANSI_SAFE = new Set<number>()
@@ -520,9 +624,19 @@ function resolveFontKey(
     .join(" ")
 
   const opaqueHint = `${family} ${fontNames} ${text}`.toLowerCase()
-  const wantsHeavy = weight === "bold" && referenceLooksHeavy(block)
+
+  const classification = classifyFontFamily(block)
+
+  if (classification === "serif") {
+    return resolveSerifFontKey(weight, style)
+  }
+
+  if (classification === "monospace") {
+    return resolveMonoFontKey(weight, style)
+  }
 
   if (opaqueHint.includes("poppins")) {
+    const wantsHeavy = weight === "bold" && referenceLooksHeavy(block)
     if (style === "italic") return "poppins-italic"
     if (wantsHeavy || opaqueHint.includes("black")) return "poppins-black"
     if (weight === "bold" || opaqueHint.includes("bold")) return "poppins-bold"
@@ -540,6 +654,7 @@ function resolveFontKey(
   }
 
   if (blockLooksLikeDisplayHeading(block)) {
+    const wantsHeavy = weight === "bold" && referenceLooksHeavy(block)
     if (style === "italic") return "poppins-italic"
     return wantsHeavy ? "poppins-black" : "poppins-bold"
   }
@@ -551,6 +666,7 @@ function resolveFontKey(
   }
 
   if (opaqueHint.includes("noto") || family.includes("sans")) {
+    const wantsHeavy = weight === "bold" && referenceLooksHeavy(block)
     if (style === "italic") return "glacial-italic"
     if (wantsHeavy || opaqueHint.includes("black")) return "poppins-bold"
     if (weight === "bold" || opaqueHint.includes("bold")) return "poppins-bold"
@@ -561,6 +677,28 @@ function resolveFontKey(
   if (weight === "bold") combined += " bold"
   if (style === "italic") combined += " italic"
   return mapFontToStandard(combined, family)
+}
+
+function resolveSerifFontKey(
+  weight: "normal" | "bold",
+  style: "normal" | "italic"
+): EmbeddedFontKey {
+  if (weight === "bold" && style === "italic")
+    return "liberation-serif-bolditalic"
+  if (weight === "bold") return "liberation-serif-bold"
+  if (style === "italic") return "liberation-serif-italic"
+  return "liberation-serif-regular"
+}
+
+function resolveMonoFontKey(
+  weight: "normal" | "bold",
+  style: "normal" | "italic"
+): EmbeddedFontKey {
+  if (weight === "bold" && style === "italic")
+    return StandardFonts.CourierBoldOblique
+  if (weight === "bold") return StandardFonts.CourierBold
+  if (style === "italic") return StandardFonts.CourierOblique
+  return StandardFonts.Courier
 }
 
 function referenceLooksHeavy(block: TextBlock): boolean {

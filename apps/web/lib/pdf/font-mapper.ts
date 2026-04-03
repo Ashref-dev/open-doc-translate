@@ -18,7 +18,30 @@ export function isItalicFont(fontName: string): boolean {
 
 function isSerifFont(fontName: string): boolean {
   const lower = fontName.toLowerCase()
-  return lower.includes("times") || lower.includes("serif")
+  return (
+    lower.includes("times") ||
+    lower.includes("garamond") ||
+    lower.includes("georgia") ||
+    lower.includes("palatino") ||
+    lower.includes("cambria") ||
+    lower.includes("bookman") ||
+    lower.includes("century") ||
+    lower.includes("didot") ||
+    lower.includes("bodoni") ||
+    lower.includes("baskerville") ||
+    lower.includes("caslon") ||
+    lower.includes("minion") ||
+    lower.includes("charter") ||
+    lower.includes("liberation serif") ||
+    lower.includes("tinos") ||
+    lower.includes("noto serif") ||
+    lower.includes("pt serif") ||
+    lower.includes("lora") ||
+    lower.includes("merriweather") ||
+    lower.includes("playfair") ||
+    lower.includes("crimson") ||
+    (lower.includes("serif") && !lower.includes("sans"))
+  )
 }
 
 function isMonoFont(fontName: string): boolean {
@@ -31,7 +54,20 @@ function isSansFont(fontName: string): boolean {
   return (
     lower.includes("arial") ||
     lower.includes("helvetica") ||
-    lower.includes("sans")
+    lower.includes("sans") ||
+    lower.includes("calibri") ||
+    lower.includes("segoe") ||
+    lower.includes("verdana") ||
+    lower.includes("tahoma") ||
+    lower.includes("trebuchet") ||
+    lower.includes("roboto") ||
+    lower.includes("inter") ||
+    lower.includes("lato") ||
+    lower.includes("montserrat") ||
+    lower.includes("poppins") ||
+    lower.includes("open sans") ||
+    lower.includes("nunito") ||
+    lower.includes("raleway")
   )
 }
 
